@@ -9,9 +9,7 @@ import time
 import traceback
 import walrus
 import datetime
-
-# Dop, getting rid of this.
-# from bhr_client.rest import login_from_env
+import requests
 
 # Define logging
 ################
@@ -87,30 +85,23 @@ def block(cidr, why, duration):
     """Block a single IP address"""
     
     source = SCRAM_SOURCE
-    autoscale = 1
+#    autoscale = 1
 
-#    logging.debug("Authenticating to SCRAM server.")
-#    client = login_from_env()
-    
     logging.debug("Attempting to block %s for %s.", cidr, why)
-#    block = client.block(cidr, source, why, duration, autoscale)
 
     # Calculate expiration from provided duration (in seconds).
     expiration = datetime.datetime.now()
     expiration = datetime.timedelta(seconds=duration)
-    comment = "Block decision from " + source
+    comment = "Block initiated from " + source
 
     url = "http://" + SCRAM_HOST + "/api/v1/entries/"
     payload = {"route": cidr, "actiontype": "block", "why": why, "expiration": expiration,
     "comment": comment, "uuid": SCRAM_UUID}
 
-#    r = requests.post(url,json=payload)
+    r = requests.post(url,json=payload)
 
-#    if(r.status_code != 201):
-#        print("wtf2")
-#    print(r.status_code)
-
-
+    if(r.status_code != 201):
+        logging.warning(f"Block request returned status code {r.status_code}")
     logging.info("Successfully blocked %s for %s.", cidr, why)
     
     return True
@@ -168,10 +159,6 @@ def main():
     if subcommand == 'run_queue':
         start_http_server(int(PROM_PORT))
         logging.info(f"Prometheus server started on port {PROM_PORT}.")
-
-# Dop: This never was needed here since it exists in the block function?
-#        login_from_env()
-#        logging.info("Successfully authenticated to SCRAM server.")
         run_queue()
     else:
         lines = sys.stdin.read().strip().split("\n")
