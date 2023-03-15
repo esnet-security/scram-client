@@ -10,6 +10,7 @@ import traceback
 import walrus
 import datetime
 import requests
+import configparser
 
 # Define logging
 ################
@@ -40,13 +41,22 @@ PROM_PORT = os.environ.get("SCRAM_PROMETHEUS_PORT", "9001")
 
 SCRAM_HOST = os.environ.get("SCRAM_HOST","")
 SCRAM_UUID = os.environ.get("SCRAM_UUID","")
-# If either of those are missing, fail.
-if(SCRAM_HOST == "" or SCRAM_UUID == ""):
-    logging.critical(f"SCRAM_HOST and SCRAM_UUID must be set as environment variables")
-    sys.exit(1)
-# Dop: Unused?
-#QUEUE_DIRECTORY = os.environ.get("BHR_QUEUE_DIRECTORY", "/var/lib/brobhrqueue")
 
+if(SCRAM_HOST == "" or SCRAM_UUID == ""):
+    config = configparser.ConfigParser()
+    config.read('/etc/sysconfig/scram-client.conf')
+    if(SCRAM_HOST == ""):
+        try:
+            SCRAM_HOST = config.get('SCRAM','SCRAM_UUID')
+        except:
+            logging.critical(f"No SCRAM_HOST set in env or conf file")
+            sys.exit(1)
+    if(SCRAM_UUID == ""):
+        try:
+            SCRAM_UUID = config.get('SCRAM','SCRAM_UUID')
+        except:
+            logging.critical(f"No SCRAM_UUID set in env or conf file")
+            sys.exit(1)
 
 subcommands = ["block", "queue", "run_queue"]
 
