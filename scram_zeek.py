@@ -166,13 +166,14 @@ def main():
             ip, note, msg, sub, duration = lines
         elif len(lines) == 4:
             ip, note, msg, duration = lines
+            sub = ""
         else:
             logging.critical(f"{len(lines)} number of lines passed to subcommand {subcommand}. Was expecting 4 or 5.")
             print(usage)
             sys.exit(1)
 
         duration = int(float(duration))
-        comment = f"{note}: {msg}"
+        comment = f"{note}: {msg} {sub}"
         if subcommand == "block":
             block(ip, comment, duration)
         elif subcommand == "queue":
