@@ -47,7 +47,7 @@ if(SCRAM_HOST == "" or SCRAM_UUID == ""):
     config.read('/etc/sysconfig/scram-client.conf')
     if(SCRAM_HOST == ""):
         try:
-            SCRAM_HOST = config.get('SCRAM','SCRAM_UUID')
+            SCRAM_HOST = config.get('SCRAM','SCRAM_HOST')
         except:
             logging.critical(f"No SCRAM_HOST set in env or conf file")
             sys.exit(1)
@@ -73,7 +73,7 @@ usage = (
     "        note: The name of the notice\n"
     "        msg: The descriptive message\n"
     "        sub: Optional. Unused.\n"
-    "        duration: Number of seconds to block it for. Will be truncated to an integer.\n"
+    "        expiration time: YYYY-MM-DD HH:MM\n"
     "\n"
     "    run_queue takes no parameters.\n"
 )
@@ -100,19 +100,23 @@ def block(cidr, why, duration):
     logging.debug("Attempting to block %s for %s.", cidr, why)
 
     # Calculate expiration from provided duration (in seconds).
+    duration = int(float(duration))
     expiration = datetime.datetime.now()
-    expiration = datetime.timedelta(seconds=duration)
+    expiration += datetime.timedelta(seconds=duration)
+    expiration = expiration.strftime("%Y-%m-%d %H:%M")
     comment = "Block initiated from " + source
 
-    url = "http://" + SCRAM_HOST + "/api/v1/entries/"
+    url = "https://" + SCRAM_HOST + "/api/v1/entries/"
     payload = {"route": cidr, "actiontype": "block", "why": why, "expiration": expiration,
     "comment": comment, "uuid": SCRAM_UUID}
 
     r = requests.post(url,json=payload)
 
     if(r.status_code != 201):
+        # if it's 403, 
         logging.warning(f"Block request returned status code {r.status_code}")
-    logging.info("Successfully blocked %s for %s.", cidr, why)
+    else:
+        logging.info("Successfully blocked %s for %s.", cidr, why)
     
     return True
 
@@ -182,7 +186,6 @@ def main():
             print(usage)
             sys.exit(1)
 
-        duration = int(float(duration))
         comment = f"{note}: {msg} {sub}"
         if subcommand == "block":
             block(ip, comment, duration)
