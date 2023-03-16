@@ -104,11 +104,10 @@ def block(cidr, why, duration):
     expiration = datetime.datetime.now()
     expiration += datetime.timedelta(seconds=duration)
     expiration = expiration.strftime("%Y-%m-%d %H:%M")
-    comment = why + "\nBlock initiated from " + source
 
     url = "https://" + SCRAM_HOST + "/api/v1/entries/"
-    payload = {"route": cidr, "actiontype": "block", "why": why, "expiration": expiration,
-    "comment": comment, "uuid": SCRAM_UUID}
+    payload = {"route": cidr, "actiontype": "block", "who": source, "expiration": expiration,
+    "comment": why, "uuid": SCRAM_UUID}
 
     r = requests.post(url,json=payload)
 
