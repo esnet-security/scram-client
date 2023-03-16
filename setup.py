@@ -1,9 +1,9 @@
 from setuptools import setup
 
-setup(name='scram-zeek',
+setup(name='scram-client',
     version='0.2',
     zip_safe=True,
-    py_modules = ["scram_zeek"],
+    py_modules = ["scram_client"],
     install_requires=[
         "certifi",
         "requests",
@@ -12,7 +12,7 @@ setup(name='scram-zeek',
     ],
     entry_points = {
         'console_scripts': [
-            'scram-zeek = scram_zeek:main',
+            'scram-client = scram_client:main',
         ]
     }
 )
