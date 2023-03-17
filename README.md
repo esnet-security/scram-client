@@ -52,7 +52,7 @@ WantedBy=multi-user.target
 
 The scram client requires a few variables to be set either in the environment or in a configuration file at `/etc/sysconfig/scram-client.conf`.
 
-```sh
+```
 [SCRAM]
 SCRAM_HOST=scram-server.my.network
 SCRAM_UUID=012a3f45-6789-1234-ab56-7890b12c345d
@@ -96,7 +96,7 @@ The simplest mode is 'block.'  As the name implies this allows you to send a
 block directly to SCRAM without any queue'ing taking place.  It's also a good
 way to make sure your client is configured and working properly.
 
-```sh
+```
 $ source scram_client_venv/bin/activate
 (scram_client_venv)$ cat testblock
 10.1.1.4
