@@ -63,7 +63,7 @@ SCRAM_LOGLEVEL=INFO
 ### Client Initialization
 
 The UUID can either be assigned by the SCRAM administrator or a client can
-register itself using the API.  A registered client still needs to have the SCRAM administrator approve the block action for that client.
+register itself using the API.  A registered client still needs to have the SCRAM administrator authorize the client.
 
 Auto-registration:
 ```
@@ -101,7 +101,7 @@ Run_queue mode is generally managed via systemd and simply reads the Redis queue
 
 ### Register
 
-The register comand simply generates a new UUID and sends it to the SCRAM server to initliaze a new client.  The SCRAM admin then needs to approve the 'block' action for the client in the SCRAM web UI.
+The register comand simply generates a new UUID and sends it to the SCRAM server to initliaze a new client.  The SCRAM admin then needs to authorize the client as well as allow whichever actiontypes for that client in the SCRAM admin webUI.
 
 ## Sample Architecture Diagram
 
