@@ -10,7 +10,7 @@ The scram-client requires a locally running Redis server if you intend to use th
 
 The scram-client is generally installed into a python3 virtual environment via:
 ```
-(scram_client_venv) $ pip install git+https://github.com/esnet-security/scram-client.git#egg=scram_client
+(scram_client_venv)$ pip install git+https://github.com/esnet-security/scram-client.git#egg=scram_client
 ```
 or via ansible, similar to:
 ```
@@ -65,27 +65,10 @@ SCRAM_LOGLEVEL=INFO
 The UUID can either be assigned by the SCRAM administrator or a client can
 register itself using the API.  A registered client still needs to have the SCRAM administrator approve the block action for that client.
 
-Template for Client Registration Code:
+Auto-registration:
 ```
-#!{{ scram_client_venv }}/bin/python3
-
-import requests
-import uuid
-
-url = "https://{{ scram_client_host }}/api/v1/register_client/"
-
-scram_uuid = str(uuid.uuid4())
-
-payload = {'hostname': '{{ inventory_hostname }}', 'uuid': scram_uuid}
-
-r = requests.post(url, json=payload)
-
-if(r.status_code != 201):
-    print("Error initializing new SCRAM client, already registered?")
-    exit(1)
-
-print(scram_uuid)
-exit(0)
+$ source scram_client_venv/bin/activate
+(scram_client_venv)$ scram-client register [server hostname]
 ```
 
 ## Modes of Operation
@@ -104,7 +87,7 @@ my_note
 my_msg
 my_sub
 600
-(scram_client_venv) $ scram_client block < testblock
+(scram_client_venv)$ scram_client block < testblock
 INFO:root:Successfully blocked 10.1.1.4 for my_note: my_msg my_sub.
 ```
 
@@ -115,6 +98,10 @@ Queue mode works in much the same way from the user perspective, but instead of 
 ### Run_queue
 
 Run_queue mode is generally managed via systemd and simply reads the Redis queue and then performs the 'block' mode operation.
+
+### Register
+
+The register comand simply generates a new UUID and sends it to the SCRAM server to initliaze a new client.  The SCRAM admin then needs to approve the 'block' action for the client in the SCRAM web UI.
 
 ## Sample Architecture Diagram
 

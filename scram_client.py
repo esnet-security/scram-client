@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import json
 import logging
 import os
 import socket
@@ -11,6 +10,7 @@ import walrus
 import datetime
 import requests
 import configparser
+import uuid
 
 # Define logging
 ################
@@ -58,7 +58,7 @@ if(SCRAM_HOST == "" or SCRAM_UUID == ""):
             logging.critical(f"No SCRAM_UUID set in env or conf file")
             sys.exit(1)
 
-subcommands = ["block", "queue", "run_queue"]
+subcommands = ["block", "queue", "run_queue", "register [server]"]
 
 usage = (
     f"Usage: {sys.argv[0]} <" + "|".join(subcommands) + ">\n"
@@ -66,10 +66,11 @@ usage = (
     "    block: Block a single IP, bypassing the queue.\n"
     "    queue: Add an IP to the queue.\n"
     "    run_queue: Attempt to block IPs in the queue, removing them if successful.\n"
+    "    register [server]: Generate a random UUID and send it to the SCRAM server"
     "\n"
     "    block and queue expect information passed on stdin, one variable per line, as follows:\n"
     "\n"
-    "        ip: IP that is being blocked\n"
+    "        cidr: IP that is being blocked in CIDR notation\n"
     "        note: The name of the notice\n"
     "        msg: The descriptive message\n"
     "        sub: Optional. Unused.\n"
@@ -161,7 +162,22 @@ def run_queue():
             time.sleep(0.1)
 
     logging.warning("queue_loop ended.")
-    
+
+def register(server):
+
+    url = "https://" + server + "/api/v1/register_client/"
+    new_scram_uuid = str(uuid.uuid4())
+    hostname = socket.gethostname()
+    payload = {'hostname': SCRAM_SOURCE, 'uuid': new_scram_uuid}
+    r = requests.post(url, json=payload)
+
+    if(r.status_code != 201):
+        logging.critical("Error initializing new SCRAM client, already registered?")
+        sys.exit(1)
+    logging.info("Successfully registered new SCRAM client")
+
+    print("New UUID: ",new_scram_uuid)
+    print("Please ask your SCRAM admin to approve this client.")
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] not in subcommands:
@@ -173,6 +189,11 @@ def main():
         start_http_server(int(PROM_PORT))
         logging.info(f"Prometheus server started on port {PROM_PORT}.")
         run_queue()
+    elif subcommand == "register":
+        if(not sys.argv[2]):
+            logging.critical(f"Missing required 'server' argument")
+            sys.exit(1)
+        register(sys.argv[2])
     else:
         lines = sys.stdin.read().strip().split("\n")
         if len(lines) == 5:
