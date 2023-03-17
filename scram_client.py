@@ -73,7 +73,7 @@ usage = (
     "        note: The name of the notice\n"
     "        msg: The descriptive message\n"
     "        sub: Optional. Unused.\n"
-    "        expiration time: YYYY-MM-DD HH:MM\n"
+    "        duration: In seconds\n"
     "\n"
     "    run_queue takes no parameters.\n"
 )
