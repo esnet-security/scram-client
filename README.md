@@ -107,5 +107,5 @@ The register comand simply generates a new UUID and sends it to the SCRAM server
 
 We use zeek here as an example service that uses the scram-client:
 
-![SCRAM Client Example](./scram_client_example.png)
+![SCRAM Client Example](./docs/scram_client_example.png)
 

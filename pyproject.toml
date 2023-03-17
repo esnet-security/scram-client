@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[console_scripts]
+scram-client = scram_client:main
+
+[project]
+name = "scram_client"
+version = "0.1"
+authors = [
+  { name="Michael Dopheide", email="dopheide@es.net" },
+  { name="Vlad Grigorescu" },
+  { name="Sam Oehlert" },
+]
+description = "A client for use with the SCRAM black hole routing software."
+readme = "README.md"
+requires-python = ">=3.7"
+dependencies = ["requests","prometheus-client","walrus"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage" = "https://github.com/esnet-security/scram-client"
