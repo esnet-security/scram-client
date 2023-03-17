@@ -58,7 +58,7 @@ if(SCRAM_HOST == "" or SCRAM_UUID == ""):
             logging.critical(f"No SCRAM_UUID set in env or conf file")
             sys.exit(1)
 
-subcommands = ["block", "queue", "run_queue", "register [server]"]
+subcommands = ["block", "queue", "run_queue", "register"]
 
 usage = (
     f"Usage: {sys.argv[0]} <" + "|".join(subcommands) + ">\n"
@@ -66,7 +66,7 @@ usage = (
     "    block: Block a single IP, bypassing the queue.\n"
     "    queue: Add an IP to the queue.\n"
     "    run_queue: Attempt to block IPs in the queue, removing them if successful.\n"
-    "    register [server]: Generate a random UUID and send it to the SCRAM server"
+    "    register [server]: Generate a random UUID and send it to the SCRAM server\n"
     "\n"
     "    block and queue expect information passed on stdin, one variable per line, as follows:\n"
     "\n"
@@ -167,12 +167,11 @@ def register(server):
 
     url = "https://" + server + "/api/v1/register_client/"
     new_scram_uuid = str(uuid.uuid4())
-    hostname = socket.gethostname()
     payload = {'hostname': SCRAM_SOURCE, 'uuid': new_scram_uuid}
     r = requests.post(url, json=payload)
 
     if(r.status_code != 201):
-        logging.critical("Error initializing new SCRAM client, already registered?")
+        print("Error initializing new SCRAM client, already registered?")
         sys.exit(1)
     logging.info("Successfully registered new SCRAM client")
 
@@ -191,7 +190,7 @@ def main():
         run_queue()
     elif subcommand == "register":
         if(not sys.argv[2]):
-            logging.critical(f"Missing required 'server' argument")
+            print(f"Missing required 'server' argument")
             sys.exit(1)
         register(sys.argv[2])
     else:
