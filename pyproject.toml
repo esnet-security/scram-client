@@ -2,9 +2,6 @@
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[console_scripts]
-scram-client = scram_client:main
-
 [project]
 name = "scram_client"
 version = "0.1"
@@ -22,5 +19,8 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
+[console_scripts]
+scram-client = "scram_client:main"
+
 [project.urls]
-Homepage" = "https://github.com/esnet-security/scram-client"
+homepage = "https://github.com/esnet-security/scram-client"
