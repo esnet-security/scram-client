@@ -19,14 +19,10 @@ or via ansible, similar to:
       name: "{{ item }}"
       virtualenv: "{{ scram_client_venv }}"
     loop:
-      - "click"
       - "git+https://github.com/esnet-security/scram-client.git#egg=scram_client"
-      - "certifi"
       - "requests"
       - "prometheus-client"
       - "walrus"
-      - "ipaddr"
-      - "jinja2"
     become: true
     become_user: "{{ scram_client_user }}"
 ```
