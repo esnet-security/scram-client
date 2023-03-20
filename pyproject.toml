@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scram_client"
-version = "0.3"
+version = "0.5"
 authors = [
   { name="Michael Dopheide", email="dopheide@es.net" },
   { name="Vlad Grigorescu" },
