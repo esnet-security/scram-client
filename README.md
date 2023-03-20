@@ -19,14 +19,10 @@ or via ansible, similar to:
       name: "{{ item }}"
       virtualenv: "{{ scram_client_venv }}"
     loop:
-      - "click"
       - "git+https://github.com/esnet-security/scram-client.git#egg=scram_client"
-      - "certifi"
       - "requests"
       - "prometheus-client"
       - "walrus"
-      - "ipaddr"
-      - "jinja2"
     become: true
     become_user: "{{ scram_client_user }}"
 ```
@@ -107,5 +103,5 @@ The register comand simply generates a new UUID and sends it to the SCRAM server
 
 We use zeek here as an example service that uses the scram-client:
 
-![SCRAM Client Example](./scram_client_example.png)
+![SCRAM Client Example](./docs/scram_client_example.png)
 
