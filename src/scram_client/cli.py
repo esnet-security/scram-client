@@ -222,6 +222,8 @@ def list_acked_entries(db: walrus.Database, limit: int = 100) -> list[dict[str, 
     """
     List up to `limit` acknowledged entries from the pending_blocks stream.
     Returns a list of dicts with 'cidr', 'why', 'duration', and 'id' fields.
+
+    TODO: Delete this and don't let this go to prod, this is for testing purposes only and is a hack (like me)
     """
     entries = []
     try:
