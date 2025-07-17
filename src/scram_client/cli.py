@@ -218,6 +218,42 @@ def list_queue_entries(db: walrus.Database, limit: int = 100) -> list[dict[str, 
     return entries
 
 
+def list_acked_entries(db: walrus.Database, limit: int = 100) -> list[dict[str, str]]:
+    """
+    List up to `limit` acknowledged entries from the pending_blocks stream.
+    Returns a list of dicts with 'cidr', 'why', 'duration', and 'id' fields.
+    """
+    entries = []
+    try:
+        cg = db.consumer_group(CONSUMER_GROUP, REDIS_STREAM_KEY)
+        pending_info = cg.pending_blocks.pending()
+        pending_ids = set(item["message_id"] for item in pending_info)
+        all_entries = db.xrange(REDIS_STREAM_KEY, count=limit * 2)
+        count = 0
+        for entry_id, data in all_entries:
+            if entry_id not in pending_ids:
+                decoded = {k.decode(): v.decode() for k, v in data.items()}
+                entries.append(
+                    {
+                        "cidr": decoded.get("cidr", ""),
+                        "why": decoded.get("why", ""),
+                        "duration": decoded.get("duration", ""),
+                        "id": entry_id.decode(),
+                    }
+                )
+                count += 1
+                if count >= limit:
+                    break
+    except Exception:
+        error_message = (
+            "Failed to list acknowledged entries from pending_blocks stream."
+        )
+        root.warning(error_message)
+        root.warning(traceback.format_exc())
+        raise click.ClickException(error_message)
+    return entries
+
+
 # CLI Stuff
 @click.group()
 def cli() -> None:
@@ -302,6 +338,23 @@ def list_queue(limit: int) -> None:
     entries = list_queue_entries(db, limit)
     if not entries:
         click.echo("No entries in the block queue.")
+        return
+    for entry in entries:
+        click.echo(
+            f"{entry['id']}: {entry['cidr']} - {entry['why']} (duration: {entry['duration']})"
+        )
+
+
+@cli.command(name="list_acked")
+@click.option(
+    "--limit", default=100, show_default=True, help="Maximum number of entries to show."
+)
+def list_acked(limit: int) -> None:
+    """List CIDR values (with messages) in the block queue that have been acked, limited to N entries."""
+    db = walrus.Database()
+    entries = list_acked_entries(db, limit)
+    if not entries:
+        click.echo("No acknowledged entries in the block queue.")
         return
     for entry in entries:
         click.echo(
