@@ -142,8 +142,9 @@ def run_queue_impl() -> None:
                         )
                     else:
                         root.warning(
-                            f"Failed to block message, not deleting. Data: {data}"
+                            f"Failed to block message, not deleting, just acking. Data: {data}"
                         )
+                        cg.pending_blocks.ack(msg_id)
                 except Exception:
                     root.warning("Caught exception in block().")
                     root.warning(traceback.format_exc())
