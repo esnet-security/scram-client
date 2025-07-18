@@ -90,7 +90,7 @@ def block_impl(cidr: str, why: str, duration: str) -> bool:
     expiration += datetime.timedelta(seconds=duration_int)
     expiration_str = expiration.strftime("%Y-%m-%d %H:%M")
 
-    url = f"http://{SCRAM_HOST}/api/v1/entries/"
+    url = f"https://{SCRAM_HOST}/api/v1/entries/"
     payload = {
         "route": cidr,
         "actiontype": "block",
@@ -100,14 +100,53 @@ def block_impl(cidr: str, why: str, duration: str) -> bool:
         "uuid": SCRAM_UUID,
     }
 
-    r = requests.post(url, json=payload)
+    try:
+        r = requests.post(url, json=payload)
+        root.info(
+            f"Successfully blocked {cidr} for {why} with status code {r.status_code}."
+        )
+        return True
+    except requests.exceptions.HTTPError as e:
+        root.warning(f"Block request failed: {e}")
+        root.debug(f"Failed block request response content: {e}")
 
-    if r.status_code != 201:
-        root.warning(f"Block request returned status code {r.status_code}")
-        root.debug(f"Failed block request response content: {r.content}")
         return False
-    root.info(f"Successfully blocked {cidr} for {why}.")
-    return True
+
+def process_message(cg: walrus.ConsumerGroup, msg_id: str, data: dict[str, str]) -> None:
+    """Process a message from the stream."""
+    try:
+        if "cidr" in data and block_impl(data["cidr"], data["why"], data["duration"]):
+            cg.pending_blocks.delete(msg_id)
+            root.info(
+                f"Deleted message ({data.get('cidr')}) from queue after blocking."
+            )
+        else:
+            root.warning(
+                f"Failed to block message, not deleting, just acking. Data: {data}"
+            )
+            cg.pending_blocks.ack(msg_id)
+    except Exception:
+        root.warning("Caught exception in block().")
+        root.warning(traceback.format_exc())
+        cg.pending_blocks.ack(msg_id)
+
+
+acked_retries = {}
+
+def retry_acked_messages(cg: walrus.ConsumerGroup) -> None:
+    """Retry failed messages."""
+    acked_messages = cg.pending_blocks.acked()
+    for msg_id, data in acked_messages:
+        if msg_id not in acked_retries:
+            acked_retries[msg_id] = 0
+        if acked_retries[msg_id] < 4:
+            data = {key.decode(): val.decode() for key, val in data.items()}
+            process_message(cg, msg_id, data)
+            acked_retries[msg_id] += 1
+        else:
+            cg.pending_blocks.delete(msg_id)
+            del acked_retries[msg_id]
+            root.info(f"Dropped message {msg_id} after 3 retries.")
 
 
 def queue_impl(cidr: str, why: str, duration: str) -> None:
@@ -132,24 +171,10 @@ def run_queue_impl() -> None:
         if messages:
             for msg_id, data in messages:
                 data = {key.decode(): val.decode() for key, val in data.items()}
-                try:
-                    if "cidr" in data and block_impl(
-                        data["cidr"], data["why"], data["duration"]
-                    ):
-                        cg.pending_blocks.delete(msg_id)
-                        root.info(
-                            f"Deleted message ({data.get('cidr')}) from queue after blocking."
-                        )
-                    else:
-                        root.warning(
-                            f"Failed to block message, not deleting, just acking. Data: {data}"
-                        )
-                        cg.pending_blocks.ack(msg_id)
-                except Exception:
-                    root.warning("Caught exception in block().")
-                    root.warning(traceback.format_exc())
+                process_message(cg, msg_id, data)
         else:
             time.sleep(0.1)
+
 
 
 def register_impl(server: str) -> None:
