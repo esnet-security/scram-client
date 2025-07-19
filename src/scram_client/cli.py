@@ -23,6 +23,16 @@ REDIS_STREAM_KEY = "pending_blocks"
 CONSUMER_GROUP = "blocked"
 CONFIG_PATH = "/etc/sysconfig/scram-client.conf"
 
+# Globals
+retry_counts = {}  # msg_id -> retry_count for failed messages
+
+
+# Create module level database
+class Config:
+    def __init__(self):
+        self.db = walrus.Database()
+
+config = Config()
 
 
 # Logging
@@ -53,18 +63,18 @@ SCRAM_HOST = os.environ.get("SCRAM_HOST", "")
 SCRAM_UUID = os.environ.get("SCRAM_UUID", "")
 
 if not SCRAM_HOST or not SCRAM_UUID:
-    config = configparser.ConfigParser()
-    config.read(CONFIG_PATH)
+    conf = configparser.ConfigParser()
+    conf.read(CONFIG_PATH)
     if not SCRAM_HOST:
         try:
-            SCRAM_HOST = config.get("SCRAM", "SCRAM_HOST")
+            SCRAM_HOST = conf.get("SCRAM", "SCRAM_HOST")
         except Exception:
             error_message = "No SCRAM_HOST set in env or conf file"
             logger.critical(error_message)
             raise click.ClickException(error_message)
     if not SCRAM_UUID:
         try:
-            SCRAM_UUID = config.get("SCRAM", "SCRAM_UUID")
+            SCRAM_UUID = conf.get("SCRAM", "SCRAM_UUID")
         except Exception:
             error_message = "No SCRAM_UUID set in env or conf file"
             logger.critical(error_message)
@@ -194,20 +204,20 @@ def register_impl(server: str) -> None:
     click.echo("Please ask your SCRAM admin to approve this client.")
 
 
-def get_queue_size(db: walrus.Database) -> int | None:
+def get_queue_size() -> int | None:
     """Return the number of entries in the pending_blocks stream."""
     try:
-        return db.xlen(REDIS_STREAM_KEY)
+        return config.db.xlen(REDIS_STREAM_KEY)
     except Exception:
         root.warning("Failed to get pending_blocks queue size.")
         root.warning(traceback.format_exc())
 
 
-def trim_queue_impl(db: walrus.Database) -> int:
+def trim_queue_impl() -> int:
     """Trim all entries from the pending_blocks stream and return the number trimmed."""
-    size = get_queue_size(db)
+    size = get_queue_size()
     try:
-        db.xtrim(REDIS_STREAM_KEY, 0)
+        config.db.xtrim(REDIS_STREAM_KEY, 0)
         return size
     except Exception:
         err_msg = "Failed to clear pending_blocks queue."
@@ -216,14 +226,14 @@ def trim_queue_impl(db: walrus.Database) -> int:
         raise click.ClickException(err_msg)
 
 
-def list_queue_entries(db: walrus.Database, limit: int = 100) -> list[dict[str, str]]:
+def list_queue_entries(limit: int = 100) -> list[dict[str, str]]:
     """
     List up to `limit` entries from the pending_blocks queue.
     Returns a list of dicts with 'cidr' and 'why' fields.
     """
     entries = []
     try:
-        results = db.xrange(REDIS_STREAM_KEY, count=limit)
+        results = config.db.xrange(REDIS_STREAM_KEY, count=limit)
         for entry_id, data in results:
             decoded = {k.decode(): v.decode() for k, v in data.items()}
             entries.append(
@@ -242,7 +252,7 @@ def list_queue_entries(db: walrus.Database, limit: int = 100) -> list[dict[str, 
     return entries
 
 
-def list_acked_entries(db: walrus.Database, limit: int = 100) -> list[dict[str, str]]:
+def list_acked_entries(limit: int = 100) -> list[dict[str, str]]:
     """
     List up to `limit` acknowledged entries from the pending_blocks stream.
     Returns a list of dicts with 'cidr', 'why', 'duration', and 'id' fields.
@@ -251,10 +261,10 @@ def list_acked_entries(db: walrus.Database, limit: int = 100) -> list[dict[str, 
     """
     entries = []
     try:
-        cg = db.consumer_group(CONSUMER_GROUP, REDIS_STREAM_KEY)
+        cg = config.db.consumer_group(CONSUMER_GROUP, REDIS_STREAM_KEY)
         pending_info = cg.pending_blocks.pending()
         pending_ids = set(item["message_id"] for item in pending_info)
-        all_entries = db.xrange(REDIS_STREAM_KEY, count=limit * 2)
+        all_entries = config.db.xrange(REDIS_STREAM_KEY, count=limit * 2)
         count = 0
         for entry_id, data in all_entries:
             if entry_id not in pending_ids:
@@ -339,9 +349,8 @@ def queue() -> None:
 @cli.command(name="trim_queue")
 def trim_queue() -> None:
     """Remove all entries from the pending_blocks queue and report how many were trimmed."""
-    db = walrus.Database()
-    trimmed = trim_queue_impl(db)
-    root.info(f"Cleared {trimmed} entries from pending_blocks queue.")
+    trimmed = trim_queue_impl()
+    logger.info(f"Cleared {trimmed} entries from pending_blocks queue.")
     click.echo(f"Cleared {trimmed} entries from pending_blocks queue.")
 
 
@@ -359,8 +368,7 @@ def queue_size() -> None:
 )
 def list_queue(limit: int) -> None:
     """List CIDR values (with messages) in the block queue, limited to N entries."""
-    db = walrus.Database()
-    entries = list_queue_entries(db, limit)
+    entries = list_queue_entries(limit)
     if not entries:
         click.echo("No entries in the block queue.")
         return
@@ -376,8 +384,7 @@ def list_queue(limit: int) -> None:
 )
 def list_acked(limit: int) -> None:
     """List CIDR values (with messages) in the block queue that have been acked, limited to N entries."""
-    db = walrus.Database()
-    entries = list_acked_entries(db, limit)
+    entries = list_acked_entries(limit)
     if not entries:
         click.echo("No acknowledged entries in the block queue.")
         return
