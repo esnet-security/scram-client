@@ -20,7 +20,9 @@ from prometheus_client import Summary, Gauge, start_http_server
 
 # Constants
 REDIS_STREAM_KEY = "pending_blocks"
+FAILED_STREAM_KEY = "failed_blocks"
 CONSUMER_GROUP = "blocked"
+FAILED_CONSUMER_GROUP = "failed"
 CONFIG_PATH = "/etc/sysconfig/scram-client.conf"
 
 # Globals
@@ -150,28 +152,30 @@ def process_message(cg: walrus.ConsumerGroup, msg_id: str, data: dict[str, str])
         move_to_failed(cg, msg_id, data)
 
 
-acked_retries = {}
+def retry_failed_messages(failed_cg: walrus.ConsumerGroup) -> None:
+    """Process messages from the failed stream."""
+    messages = failed_cg.failed_blocks.read(count=10)
 
-def retry_acked_messages(cg: walrus.ConsumerGroup) -> None:
-    """Retry failed messages."""
-    acked_messages = cg.pending_blocks.acked()
-    for msg_id, data in acked_messages:
-        if msg_id not in acked_retries:
-            acked_retries[msg_id] = 0
-        if acked_retries[msg_id] < 4:
-            data = {key.decode(): val.decode() for key, val in data.items()}
-            process_message(cg, msg_id, data)
-            acked_retries[msg_id] += 1
+    for msg_id, data in messages:
+        data = {key.decode(): val.decode() for key, val in data.items()}
+        retry_count = retry_counts.get(msg_id, 0)
+        if retry_count < 3:
+            if attempt_block(data):
+                failed_cg.failed_blocks.delete(msg_id)
+                retry_counts.pop(msg_id, None)
+                logger.info(f"Successfully blocked {msg_id} - {data.get('cidr')}")
+            else:
+                retry_counts[msg_id] = retry_count + 1
+                logger.warning(f"Retry {retry_count + 1} failed for {msg_id} - {data.get('cidr')}")
         else:
-            cg.pending_blocks.delete(msg_id)
-            del acked_retries[msg_id]
-            root.info(f"Dropped message {msg_id} after 3 retries.")
+            failed_cg.failed_blocks.delete(msg_id)
+            retry_counts.pop(msg_id, None)
+            logger.error(f"Dropped {msg_id} - {data.get('cidr')} after maximum retries")
 
 
 def queue_impl(cidr: str, why: str, duration: str) -> None:
     """Add a single IP address to the queue."""
-    db = walrus.Database()
-    db.xadd(REDIS_STREAM_KEY, {"cidr": cidr, "why": why, "duration": duration})
+    config.db.xadd(REDIS_STREAM_KEY, {"cidr": cidr, "why": why, "duration": duration})
     LAST_SUCCESSFUL_INSERTION.set_to_current_time()
 
 
@@ -180,9 +184,12 @@ def run_queue_impl() -> None:
 
     logger.info("queue_loop started.")
 
-    # Create the consumer group
-    cg = db.consumer_group(CONSUMER_GROUP, REDIS_STREAM_KEY)
+    # Create consumer groups
+    cg = config.db.consumer_group(CONSUMER_GROUP, REDIS_STREAM_KEY)
     cg.create()
+
+    failed_cg = config.db.consumer_group(FAILED_CONSUMER_GROUP, FAILED_STREAM_KEY)
+    failed_cg.create()
 
     while True:
         messages = cg.pending_blocks.read()
