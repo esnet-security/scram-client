@@ -367,6 +367,7 @@ def trim_queue() -> None:
     click.echo(f"Cleared {trimmed} entries from pending_blocks queue.")
 
 
+# TODO: add a command for getting the failed_queue_size
 @cli.command(name="queue_size")
 def queue_size() -> None:
     """Show the number of entries in the pending_blocks queue."""
