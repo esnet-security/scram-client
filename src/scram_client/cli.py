@@ -24,7 +24,8 @@ CONSUMER_GROUP = "blocked"
 CONFIG_PATH = "/etc/sysconfig/scram-client.conf"
 
 
-# Logging Stuff
+
+# Logging
 class OneLineExceptionFormatter(logging.Formatter):
     def formatException(self, exc_info):
         result = super().formatException(exc_info)
@@ -41,11 +42,11 @@ handler = logging.StreamHandler()
 formatter = OneLineExceptionFormatter(logging.BASIC_FORMAT)
 handler.setFormatter(formatter)
 
-root = logging.getLogger()
-root.setLevel(os.environ.get("SCRAM_LOGLEVEL", "INFO"))
-root.addHandler(handler)
+logger = logging.getLogger()
+logger.setLevel(os.environ.get("SCRAM_LOGLEVEL", "INFO"))
+logger.addHandler(handler)
 
-# Prometheus Stuff
+# Prometheus
 SCRAM_SOURCE = os.environ.get("SCRAM_SOURCE", socket.gethostname())
 PROM_PORT = int(os.environ.get("SCRAM_PROMETHEUS_PORT", "9001"))
 SCRAM_HOST = os.environ.get("SCRAM_HOST", "")
@@ -59,14 +60,14 @@ if not SCRAM_HOST or not SCRAM_UUID:
             SCRAM_HOST = config.get("SCRAM", "SCRAM_HOST")
         except Exception:
             error_message = "No SCRAM_HOST set in env or conf file"
-            root.critical(error_message)
+            logger.critical(error_message)
             raise click.ClickException(error_message)
     if not SCRAM_UUID:
         try:
             SCRAM_UUID = config.get("SCRAM", "SCRAM_UUID")
         except Exception:
             error_message = "No SCRAM_UUID set in env or conf file"
-            root.critical(error_message)
+            logger.critical(error_message)
             raise click.ClickException(error_message)
 
 BLOCK_TIME = Summary("scram_block_processing_seconds", "Time spent blocking IPs")
@@ -82,7 +83,7 @@ def block_impl(cidr: str, why: str, duration: str) -> bool:
 
     source = SCRAM_SOURCE
 
-    root.debug(f"Attempting to block {cidr} for {why}.")
+    logger.debug(f"Attempting to block {cidr} for {why}.")
 
     # Calculate expiration from provided duration (in seconds).
     duration_int = int(float(duration))
@@ -102,13 +103,12 @@ def block_impl(cidr: str, why: str, duration: str) -> bool:
 
     try:
         r = requests.post(url, json=payload)
-        root.info(
-            f"Successfully blocked {cidr} for {why} with status code {r.status_code}."
-        )
+        logger.info(f"Successfully blocked {cidr} for {why} with status code {r.status_code}.")
+
         return True
     except requests.exceptions.HTTPError as e:
-        root.warning(f"Block request failed: {e}")
-        root.debug(f"Failed block request response content: {e}")
+        logger.warning(f"Block request failed: {e}")
+        logger.debug(f"Failed block request response content: {e}")
 
         return False
 
@@ -159,8 +159,7 @@ def queue_impl(cidr: str, why: str, duration: str) -> None:
 def run_queue_impl() -> None:
     """Run in a loop, checking the queue and blocking IPs as they appear."""
 
-    root.info("queue_loop started.")
-    db = walrus.Database()
+    logger.info("queue_loop started.")
 
     # Create the consumer group
     cg = db.consumer_group(CONSUMER_GROUP, REDIS_STREAM_KEY)
@@ -185,11 +184,11 @@ def register_impl(server: str) -> None:
     r = requests.post(url, json=payload)
 
     if r.status_code != 201:
-        error_message = (
+        err_msg = (
             f"Error initializing new SCRAM client. \n \n Response: {r.content}"
         )
-        root.critical(error_message)
-        raise click.ClickException(error_message)
+        logger.critical(err_msg)
+        raise click.ClickException(err_msg)
     click.echo("Successfully registered new SCRAM client")
     click.echo(f"New UUID: {new_scram_uuid}")
     click.echo("Please ask your SCRAM admin to approve this client.")
@@ -211,10 +210,10 @@ def trim_queue_impl(db: walrus.Database) -> int:
         db.xtrim(REDIS_STREAM_KEY, 0)
         return size
     except Exception:
-        error_message = "Failed to clear pending_blocks queue."
-        root.critical(error_message)
-        root.critical(traceback.format_exc())
-        raise click.ClickException(error_message)
+        err_msg = "Failed to clear pending_blocks queue."
+        logger.critical(err_msg)
+        logger.critical(traceback.format_exc())
+        raise click.ClickException(err_msg)
 
 
 def list_queue_entries(db: walrus.Database, limit: int = 100) -> list[dict[str, str]]:
@@ -236,10 +235,10 @@ def list_queue_entries(db: walrus.Database, limit: int = 100) -> list[dict[str, 
                 }
             )
     except Exception:
-        error_message = "Failed to list entries from pending_blocks queue."
-        root.warning(error_message)
-        root.warning(traceback.format_exc())
-        raise click.ClickException(error_message)
+        err_msg = "Failed to list entries from pending_blocks queue."
+        logger.warning(err_msg)
+        logger.warning(traceback.format_exc())
+        raise click.ClickException(err_msg)
     return entries
 
 
@@ -272,12 +271,12 @@ def list_acked_entries(db: walrus.Database, limit: int = 100) -> list[dict[str, 
                 if count >= limit:
                     break
     except Exception:
-        error_message = (
+        err_msg = (
             "Failed to list acknowledged entries from pending_blocks stream."
         )
-        root.warning(error_message)
-        root.warning(traceback.format_exc())
-        raise click.ClickException(error_message)
+        logger.warning(err_msg)
+        logger.warning(traceback.format_exc())
+        raise click.ClickException(err_msg)
     return entries
 
 
@@ -292,7 +291,7 @@ def cli() -> None:
 def run_queue() -> None:
     """Attempt to block IPs in the queue, removing them if successful."""
     start_http_server(PROM_PORT)
-    root.info(f"Prometheus server started on port {PROM_PORT}.")
+    logger.info(f"Prometheus server started on port {PROM_PORT}.")
     run_queue_impl()
 
 
@@ -313,9 +312,9 @@ def block() -> None:
         ip, note, msg, duration = lines
         sub = ""
     else:
-        error_message = f"{len(lines)} number of lines passed to subcommand block. Was expecting 4 or 5."
-        root.critical(error_message)
-        raise click.ClickException(error_message)
+        err_msg = f"{len(lines)} number of lines passed to subcommand block. Was expecting 4 or 5."
+        logger.critical(err_msg)
+        raise click.ClickException(err_msg)
     comment = f"{note}: {msg} {sub}"
     block_impl(ip, comment, duration)
 
@@ -330,9 +329,9 @@ def queue() -> None:
         ip, note, msg, duration = lines
         sub = ""
     else:
-        error_message = f"{len(lines)} number of lines passed to subcommand queue. Was expecting 4 or 5."
-        root.critical(error_message)
-        raise click.ClickException(error_message)
+        err_msg = f"{len(lines)} number of lines passed to subcommand queue. Was expecting 4 or 5."
+        logger.critical(err_msg)
+        raise click.ClickException(err_msg)
     comment = f"{note}: {msg} {sub}"
     queue_impl(ip, comment, duration)
 
@@ -349,9 +348,8 @@ def trim_queue() -> None:
 @cli.command(name="queue_size")
 def queue_size() -> None:
     """Show the number of entries in the pending_blocks queue."""
-    db = walrus.Database()
-    size = get_queue_size(db)
-    root.info(f"pending_blocks queue size: {size}")
+    size = get_queue_size()
+    logger.info(f"pending_blocks queue size: {size}")
     click.echo(f"pending_blocks queue size: {size}")
 
 
