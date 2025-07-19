@@ -122,6 +122,19 @@ def block_impl(cidr: str, why: str, duration: str) -> bool:
 
         return False
 
+
+def attempt_block(data: dict[str, str]) -> bool:
+    """Attempt to block an IP. Returns True if successful."""
+    return "cidr" in data and block_impl(data["cidr"], data["why"], data["duration"])
+
+
+def move_to_failed(cg: walrus.ConsumerGroup, msg_id: str, data: dict[str, str]) -> None:
+    """Move message to the failed stream."""
+    failed_data = data.copy()
+    config.db.xadd(FAILED_STREAM_KEY, failed_data)
+    cg.pending_blocks.delete(msg_id)
+
+
 def process_message(cg: walrus.ConsumerGroup, msg_id: str, data: dict[str, str]) -> None:
     """Process a message from the stream."""
     try:
