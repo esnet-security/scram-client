@@ -3,20 +3,20 @@
 SCRAM Client CLI
 """
 
+import click
 import configparser
 import datetime
 import logging
 import os
+import requests
 import socket
 import sys
 import time
 import traceback
 import uuid
-
-import click
-import requests
 import walrus
-from prometheus_client import Summary, Gauge, start_http_server
+
+from prometheus_client import Gauge, Summary, start_http_server
 
 # Constants
 REDIS_STREAM_KEY = "pending_blocks"
