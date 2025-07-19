@@ -138,20 +138,16 @@ def move_to_failed(cg: walrus.ConsumerGroup, msg_id: str, data: dict[str, str]) 
 def process_message(cg: walrus.ConsumerGroup, msg_id: str, data: dict[str, str]) -> None:
     """Process a message from the stream."""
     try:
-        if "cidr" in data and block_impl(data["cidr"], data["why"], data["duration"]):
+        if attempt_block(data):
             cg.pending_blocks.delete(msg_id)
-            root.info(
-                f"Deleted message ({data.get('cidr')}) from queue after blocking."
-            )
+            logger.info(f"Deleted message ({data.get('cidr')}) from queue after blocking.")
         else:
-            root.warning(
-                f"Failed to block message, not deleting, just acking. Data: {data}"
-            )
-            cg.pending_blocks.ack(msg_id)
+            move_to_failed(cg, msg_id, data)
+            logger.warning(f"Failed to block, moved to failed stream")
     except Exception:
-        root.warning("Caught exception in block().")
-        root.warning(traceback.format_exc())
-        cg.pending_blocks.ack(msg_id)
+        logger.warning("Caught exception in process_message().")
+        logger.warning(traceback.format_exc())
+        move_to_failed(cg, msg_id, data)
 
 
 acked_retries = {}
@@ -194,9 +190,9 @@ def run_queue_impl() -> None:
             for msg_id, data in messages:
                 data = {key.decode(): val.decode() for key, val in data.items()}
                 process_message(cg, msg_id, data)
-        else:
-            time.sleep(0.1)
 
+        # Do we want to wait for an empty PEL or do it every loop or retry after n loops?
+        retry_failed_messages(failed_cg)
 
 
 def register_impl(server: str) -> None:
@@ -222,8 +218,8 @@ def get_queue_size() -> int | None:
     try:
         return config.db.xlen(REDIS_STREAM_KEY)
     except Exception:
-        root.warning("Failed to get pending_blocks queue size.")
-        root.warning(traceback.format_exc())
+        logger.warning("Failed to get pending_blocks queue size.")
+        logger.warning(traceback.format_exc())
 
 
 def trim_queue_impl() -> int:
