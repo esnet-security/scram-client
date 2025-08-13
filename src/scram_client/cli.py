@@ -127,6 +127,7 @@ def block_impl(cidr: str, why: str, duration: str) -> bool:
 
 def attempt_block(data: dict[str, str]) -> bool:
     """Attempt to block an IP. Returns True if successful."""
+
     return "cidr" in data and block_impl(data["cidr"], data["why"], data["duration"])
 
 
@@ -200,6 +201,7 @@ def run_queue_impl() -> None:
 
         # Do we want to wait for an empty PEL or do it every loop or retry after n loops?
         retry_failed_messages(failed_cg)
+        time.sleep(.1)
 
 
 def register_impl(server: str) -> None:
@@ -210,9 +212,7 @@ def register_impl(server: str) -> None:
     r = requests.post(url, json=payload)
 
     if r.status_code != 201:
-        err_msg = (
-            f"Error initializing new SCRAM client. \n \n Response: {r.content}"
-        )
+        err_msg = f"Error initializing new SCRAM client. \n \n Response: {r.content}"
         logger.critical(err_msg)
         raise click.ClickException(err_msg)
     click.echo("Successfully registered new SCRAM client")
