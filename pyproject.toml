@@ -13,7 +13,7 @@ authors = [
 description = "A client for use with the SCRAM black hole routing software."
 readme = "README.md"
 requires-python = ">=3.7"
-dependencies = ["requests","prometheus-client","walrus"]
+dependencies = ["click", "requests","prometheus-client","walrus"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",

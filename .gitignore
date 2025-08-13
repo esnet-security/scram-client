@@ -18,3 +18,6 @@ pip-log.txt
 .coverage
 .tox
 *.pex
+
+# Pycharm specific things
+.idea/workspace.xml
