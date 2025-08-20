@@ -1,0 +1,39 @@
+{
+    "version": "0.1.0",
+    "configurations": [
+        {
+            "name": "Debug with run_queue command",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/scram_client/cli.py",
+            "args": ["run_queue"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                // "SCRAM_HOST": "localhost:32773",
+                "SCRAM_HOST": "example.com",
+                "SCRAM_UUID": "84328977-e451-4845-9018-2806601a51ae",
+                "SCRAM_PROMETHEUS_PORT": "9115",
+                "SCRAM_LOGLEVEL":"DEBUG",
+            },
+            "justMyCode": true,
+        },
+        {
+            "name": "Debug (with prompt for args)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/scram_client/cli.py",
+            "args": ["${command:pickArgs}"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                // "SCRAM_HOST": "localhost:32773",
+                "SCRAM_HOST": "example.com",
+                "SCRAM_UUID": "84328977-e451-4845-9018-2806601a51ae",
+                "SCRAM_PROMETHEUS_PORT": "9115",
+                "SCRAM_LOGLEVEL":"DEBUG",
+            },
+            "justMyCode": true
+        }
+    ]
+}

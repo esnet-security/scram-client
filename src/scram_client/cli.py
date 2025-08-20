@@ -1,215 +1,415 @@
 #!/usr/bin/env python3
+"""
+SCRAM Client CLI
+"""
 
+import click
+import configparser
+import datetime
 import logging
 import os
+import requests
 import socket
 import sys
 import time
 import traceback
-import walrus
-import datetime
-import requests
-import configparser
 import uuid
+import walrus
 
-# Define logging
-################
+from prometheus_client import Gauge, Summary, start_http_server
 
+# Constants
+REDIS_STREAM_KEY = "pending_blocks"
+FAILED_STREAM_KEY = "failed_blocks"
+CONSUMER_GROUP = "blocked"
+FAILED_CONSUMER_GROUP = "failed"
+CONFIG_PATH = "/etc/sysconfig/scram-client.conf"
+
+# Globals
+retry_counts = {}  # msg_id -> retry_count for failed messages
+
+
+# Create module level database
+class Config:
+    def __init__(self):
+        self.db = walrus.Database()
+
+config = Config()
+
+
+# Logging
 class OneLineExceptionFormatter(logging.Formatter):
     def formatException(self, exc_info):
         result = super().formatException(exc_info)
         return repr(result)
- 
+
     def format(self, record):
         result = super().format(record)
         if record.exc_text:
             result = result.replace("\n", "")
         return result
- 
+
+
 handler = logging.StreamHandler()
 formatter = OneLineExceptionFormatter(logging.BASIC_FORMAT)
 handler.setFormatter(formatter)
 
-root = logging.getLogger()
-root.setLevel(os.environ.get("SCRAM_LOGLEVEL", "INFO"))
-root.addHandler(handler)
+logger = logging.getLogger()
+logger.setLevel(os.environ.get("SCRAM_LOGLEVEL", "INFO"))
+logger.addHandler(handler)
 
-logging.getLogger("requests").setLevel(os.environ.get("SCRAM_LOGLEVEL", "WARNING"))
-
+# Prometheus
 SCRAM_SOURCE = os.environ.get("SCRAM_SOURCE", socket.gethostname())
-PROM_PORT = os.environ.get("SCRAM_PROMETHEUS_PORT", "9001")
+PROM_PORT = int(os.environ.get("SCRAM_PROMETHEUS_PORT", "9001"))
+SCRAM_HOST = os.environ.get("SCRAM_HOST", "")
+SCRAM_UUID = os.environ.get("SCRAM_UUID", "")
 
-SCRAM_HOST = os.environ.get("SCRAM_HOST","")
-SCRAM_UUID = os.environ.get("SCRAM_UUID","")
-
-if(SCRAM_HOST == "" or SCRAM_UUID == ""):
-    config = configparser.ConfigParser()
-    config.read('/etc/sysconfig/scram-client.conf')
-    if(SCRAM_HOST == ""):
+if not SCRAM_HOST or not SCRAM_UUID:
+    conf = configparser.ConfigParser()
+    conf.read(CONFIG_PATH)
+    if not SCRAM_HOST:
         try:
-            SCRAM_HOST = config.get('SCRAM','SCRAM_HOST')
-        except:
-            logging.critical(f"No SCRAM_HOST set in env or conf file")
-            sys.exit(1)
-    if(SCRAM_UUID == ""):
+            SCRAM_HOST = conf.get("SCRAM", "SCRAM_HOST")
+        except Exception:
+            error_message = "No SCRAM_HOST set in env or conf file"
+            logger.critical(error_message)
+            raise click.ClickException(error_message)
+    if not SCRAM_UUID:
         try:
-            SCRAM_UUID = config.get('SCRAM','SCRAM_UUID')
-        except:
-            logging.critical(f"No SCRAM_UUID set in env or conf file")
-            sys.exit(1)
+            SCRAM_UUID = conf.get("SCRAM", "SCRAM_UUID")
+        except Exception:
+            error_message = "No SCRAM_UUID set in env or conf file"
+            logger.critical(error_message)
+            raise click.ClickException(error_message)
 
-subcommands = ["block", "queue", "run_queue", "register"]
-
-usage = (
-    f"Usage: {sys.argv[0]} <" + "|".join(subcommands) + ">\n"
-    "\n"
-    "    block: Block a single IP, bypassing the queue.\n"
-    "    queue: Add an IP to the queue.\n"
-    "    run_queue: Attempt to block IPs in the queue, removing them if successful.\n"
-    "    register [server]: Generate a random UUID and send it to the SCRAM server\n"
-    "\n"
-    "    block and queue expect information passed on stdin, one variable per line, as follows:\n"
-    "\n"
-    "        cidr: IP that is being blocked in CIDR notation\n"
-    "        note: The name of the notice\n"
-    "        msg: The descriptive message\n"
-    "        sub: Optional. Unused.\n"
-    "        duration: In seconds\n"
-    "\n"
-    "    run_queue takes no parameters.\n"
+BLOCK_TIME = Summary("scram_block_processing_seconds", "Time spent blocking IPs")
+LAST_SUCCESSFUL_INSERTION = Gauge(
+    "scram_last_successful_push", "Timestamp of our last successful queue insertion"
 )
 
-# Prometheus Exporter
-####################
 
-from prometheus_client import start_http_server, Counter, Gauge, Summary
-BLOCK_TIME = Summary('scram_block_processing_seconds', 'Time spent blocking IPs')
-QUEUE_SIZE = Gauge('scram_queue_size', 'Elements in the queue')
-DEQUEUES_ATTEMPTED = Counter('scram_dequeues_attempted', 'Number of times we tried to remove something from the queue')
-DEQUEUES_SUCCESSFUL = Counter('scram_dequeues_successful', 'Number of times we successfully removed something from the queue')
-LAST_SUCCESSFUL_INSERTION = Gauge('scram_last_successful_push', 'Timestamp of our last successful queue insertion')
-LAST_SUCCESSFUL_REMOVAL = Gauge('scram_last_successful_pop', 'Timestamp of our last successful queue removal')
-
-
+# Core Logic
 @BLOCK_TIME.time()
-def block(cidr, why, duration):
-    """Block a single IP address"""
-    
-    source = SCRAM_SOURCE
-#    autoscale = 1
+def block_impl(cidr: str, why: str, duration: str) -> bool:
+    """Block a single IP address."""
 
-    logging.debug("Attempting to block %s for %s.", cidr, why)
+    source = SCRAM_SOURCE
+
+    logger.debug(f"Attempting to block {cidr} for {why}.")
 
     # Calculate expiration from provided duration (in seconds).
-    duration = int(float(duration))
+    duration_int = int(float(duration))
     expiration = datetime.datetime.now()
-    expiration += datetime.timedelta(seconds=duration)
-    expiration = expiration.strftime("%Y-%m-%d %H:%M")
+    expiration += datetime.timedelta(seconds=duration_int)
+    expiration_str = expiration.strftime("%Y-%m-%d %H:%M")
 
-    url = "https://" + SCRAM_HOST + "/api/v1/entries/"
-    payload = {"route": cidr, "actiontype": "block", "who": source, "expiration": expiration,
-    "comment": why, "uuid": SCRAM_UUID}
+    url = f"https://{SCRAM_HOST}/api/v1/entries/"
+    payload = {
+        "route": cidr,
+        "actiontype": "block",
+        "who": source,
+        "expiration": expiration_str,
+        "comment": why,
+        "uuid": SCRAM_UUID,
+    }
 
-    r = requests.post(url,json=payload)
+    try:
+        r = requests.post(url, json=payload)
+        logger.info(f"Successfully blocked {cidr} for {why} with status code {r.status_code}.")
 
-    if(r.status_code != 201):
-        # if it's 403, 
-        logging.warning(f"Block request returned status code {r.status_code}")
-    else:
-        logging.info("Successfully blocked %s for %s.", cidr, why)
-    
-    return True
+        return True
+    except requests.exceptions.HTTPError as e:
+        logger.warning(f"Block request failed: {e}")
+        logger.debug(f"Failed block request response content: {e}")
+
+        return False
 
 
-def queue(cidr, why, duration):
-    """Add a single IP address to the queue"""
+def attempt_block(data: dict[str, str]) -> bool:
+    """Attempt to block an IP. Returns True if successful."""
 
-    db = walrus.Database()
+    return "cidr" in data and block_impl(data["cidr"], data["why"], data["duration"])
 
-    # Add an empty message to create the stream
-    db.xadd('pending_blocks', {'cidr': cidr, 'why': why, 'duration': duration})
+
+def move_to_failed(cg: walrus.ConsumerGroup, msg_id: str, data: dict[str, str]) -> None:
+    """Move message to the failed stream."""
+    failed_data = data.copy()
+    config.db.xadd(FAILED_STREAM_KEY, failed_data)
+    cg.pending_blocks.delete(msg_id)
+
+
+def process_message(cg: walrus.ConsumerGroup, msg_id: str, data: dict[str, str]) -> None:
+    """Process a message from the stream."""
+    try:
+        if attempt_block(data):
+            cg.pending_blocks.delete(msg_id)
+            logger.info(f"Deleted message ({data.get('cidr')}) from queue after blocking.")
+        else:
+            move_to_failed(cg, msg_id, data)
+            logger.warning(f"Failed to block, moved to failed stream")
+    except Exception:
+        logger.warning("Caught exception in process_message().")
+        logger.warning(traceback.format_exc())
+        move_to_failed(cg, msg_id, data)
+
+
+def retry_failed_messages(failed_cg: walrus.ConsumerGroup) -> None:
+    """Process messages from the failed stream."""
+    messages = failed_cg.failed_blocks.read(count=10)
+
+    for msg_id, data in messages:
+        data = {key.decode(): val.decode() for key, val in data.items()}
+        retry_count = retry_counts.get(msg_id, 0)
+        if retry_count < 3:
+            if attempt_block(data):
+                failed_cg.failed_blocks.delete(msg_id)
+                retry_counts.pop(msg_id, None)
+                logger.info(f"Successfully blocked {msg_id} - {data.get('cidr')}")
+            else:
+                retry_counts[msg_id] = retry_count + 1
+                logger.warning(f"Retry {retry_count + 1} failed for {msg_id} - {data.get('cidr')}")
+        else:
+            failed_cg.failed_blocks.delete(msg_id)
+            retry_counts.pop(msg_id, None)
+            logger.error(f"Dropped {msg_id} - {data.get('cidr')} after maximum retries")
+
+
+def queue_impl(cidr: str, why: str, duration: str) -> None:
+    """Add a single IP address to the queue."""
+    config.db.xadd(REDIS_STREAM_KEY, {"cidr": cidr, "why": why, "duration": duration})
     LAST_SUCCESSFUL_INSERTION.set_to_current_time()
 
 
-def run_queue():
+def run_queue_impl() -> None:
     """Run in a loop, checking the queue and blocking IPs as they appear."""
 
-    logging.info("queue_loop started.")
-    db = walrus.Database()
+    logger.info("queue_loop started.")
 
-    # Add an empty message to create the stream
-    db.xadd('pending_blocks', {'type': "null"})
-
-    # Create the consumer group
-    cg = db.consumer_group('blocked', 'pending_blocks')
+    # Create consumer groups
+    cg = config.db.consumer_group(CONSUMER_GROUP, REDIS_STREAM_KEY)
     cg.create()
-    
+
+    failed_cg = config.db.consumer_group(FAILED_CONSUMER_GROUP, FAILED_STREAM_KEY)
+    failed_cg.create()
+
     while True:
         messages = cg.pending_blocks.read()
         if messages:
-            for message in messages:
-                msg_id, data = message
-                data = { key.decode(): val.decode() for key, val in data.items() }
-                try:
-                    if 'cidr' in data and block(data['cidr'], data['why'], data['duration']):
-                        cg.pending_blocks.ack(msg_id)
-                    else:
-                        print(data)
-                except Exception:
-                    logging.warning("Caught exception in block().")
-                    logging.warning(traceback.format_exc())
-        else:
-            time.sleep(0.1)
+            for msg_id, data in messages:
+                data = {key.decode(): val.decode() for key, val in data.items()}
+                process_message(cg, msg_id, data)
 
-    logging.warning("queue_loop ended.")
+        # Do we want to wait for an empty PEL or do it every loop or retry after n loops?
+        retry_failed_messages(failed_cg)
+        time.sleep(.1)
 
-def register(server):
 
-    url = "https://" + server + "/api/v1/register_client/"
+def register_impl(server: str) -> None:
+    """Register this client with the SCRAM server."""
+    url = f"https://{server}/api/v1/register_client/"
     new_scram_uuid = str(uuid.uuid4())
-    payload = {'hostname': SCRAM_SOURCE, 'uuid': new_scram_uuid}
+    payload = {"hostname": SCRAM_SOURCE, "uuid": new_scram_uuid}
     r = requests.post(url, json=payload)
 
-    if(r.status_code != 201):
-        print("Error initializing new SCRAM client, already registered?")
-        sys.exit(1)
-    logging.info("Successfully registered new SCRAM client")
+    if r.status_code != 201:
+        err_msg = f"Error initializing new SCRAM client. \n \n Response: {r.content}"
+        logger.critical(err_msg)
+        raise click.ClickException(err_msg)
+    click.echo("Successfully registered new SCRAM client")
+    click.echo(f"New UUID: {new_scram_uuid}")
+    click.echo("Please ask your SCRAM admin to approve this client.")
 
-    print("New UUID: ",new_scram_uuid)
-    print("Please ask your SCRAM admin to approve this client.")
 
-def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in subcommands:
-        print(usage)
-        sys.exit(1)
+def get_queue_size() -> int | None:
+    """Return the number of entries in the pending_blocks stream."""
+    try:
+        return config.db.xlen(REDIS_STREAM_KEY)
+    except Exception:
+        logger.warning("Failed to get pending_blocks queue size.")
+        logger.warning(traceback.format_exc())
 
-    subcommand = sys.argv[1]
-    if subcommand == 'run_queue':
-        start_http_server(int(PROM_PORT))
-        logging.info(f"Prometheus server started on port {PROM_PORT}.")
-        run_queue()
-    elif subcommand == "register":
-        if(not sys.argv[2]):
-            print(f"Missing required 'server' argument")
-            sys.exit(1)
-        register(sys.argv[2])
+
+def trim_queue_impl() -> int:
+    """Trim all entries from the pending_blocks stream and return the number trimmed."""
+    size = get_queue_size()
+    try:
+        config.db.xtrim(REDIS_STREAM_KEY, 0)
+        return size
+    except Exception:
+        err_msg = "Failed to clear pending_blocks queue."
+        logger.critical(err_msg)
+        logger.critical(traceback.format_exc())
+        raise click.ClickException(err_msg)
+
+
+def list_queue_entries(limit: int = 100) -> list[dict[str, str]]:
+    """
+    List up to `limit` entries from the pending_blocks queue.
+    Returns a list of dicts with 'cidr' and 'why' fields.
+    """
+    entries = []
+    try:
+        results = config.db.xrange(REDIS_STREAM_KEY, count=limit)
+        for entry_id, data in results:
+            decoded = {k.decode(): v.decode() for k, v in data.items()}
+            entries.append(
+                {
+                    "cidr": decoded.get("cidr", ""),
+                    "why": decoded.get("why", ""),
+                    "duration": decoded.get("duration", ""),
+                    "id": entry_id.decode(),
+                }
+            )
+    except Exception:
+        err_msg = "Failed to list entries from pending_blocks queue."
+        logger.warning(err_msg)
+        logger.warning(traceback.format_exc())
+        raise click.ClickException(err_msg)
+    return entries
+
+
+def list_acked_entries(limit: int = 100) -> list[dict[str, str]]:
+    """
+    List up to `limit` acknowledged entries from the pending_blocks stream.
+    Returns a list of dicts with 'cidr', 'why', 'duration', and 'id' fields.
+
+    TODO: Delete this and don't let this go to prod, this is for testing purposes only and is a hack (like me)
+    """
+    entries = []
+    try:
+        cg = config.db.consumer_group(CONSUMER_GROUP, REDIS_STREAM_KEY)
+        pending_info = cg.pending_blocks.pending()
+        pending_ids = set(item["message_id"] for item in pending_info)
+        all_entries = config.db.xrange(REDIS_STREAM_KEY, count=limit * 2)
+        count = 0
+        for entry_id, data in all_entries:
+            if entry_id not in pending_ids:
+                decoded = {k.decode(): v.decode() for k, v in data.items()}
+                entries.append(
+                    {
+                        "cidr": decoded.get("cidr", ""),
+                        "why": decoded.get("why", ""),
+                        "duration": decoded.get("duration", ""),
+                        "id": entry_id.decode(),
+                    }
+                )
+                count += 1
+                if count >= limit:
+                    break
+    except Exception:
+        err_msg = (
+            "Failed to list acknowledged entries from pending_blocks stream."
+        )
+        logger.warning(err_msg)
+        logger.warning(traceback.format_exc())
+        raise click.ClickException(err_msg)
+    return entries
+
+
+# CLI Stuff
+@click.group()
+def cli() -> None:
+    """SCRAM client command line interface."""
+    pass
+
+
+@cli.command(name="run_queue")
+def run_queue() -> None:
+    """Attempt to block IPs in the queue, removing them if successful."""
+    start_http_server(PROM_PORT)
+    logger.info(f"Prometheus server started on port {PROM_PORT}.")
+    run_queue_impl()
+
+
+@cli.command(name="register")
+@click.argument("server", type=str)
+def register(server: str) -> None:
+    """Generate a random UUID and send it to the SCRAM server."""
+    register_impl(server)
+
+
+@cli.command(name="block")
+def block() -> None:
+    """Block a single IP, bypassing the queue. Reads input from stdin."""
+    lines = sys.stdin.read().strip().split("\n")
+    if len(lines) == 5:
+        ip, note, msg, sub, duration = lines
+    elif len(lines) == 4:
+        ip, note, msg, duration = lines
+        sub = ""
     else:
-        lines = sys.stdin.read().strip().split("\n")
-        if len(lines) == 5:
-            ip, note, msg, sub, duration = lines
-        elif len(lines) == 4:
-            ip, note, msg, duration = lines
-            sub = ""
-        else:
-            logging.critical(f"{len(lines)} number of lines passed to subcommand {subcommand}. Was expecting 4 or 5.")
-            print(usage)
-            sys.exit(1)
+        err_msg = f"{len(lines)} number of lines passed to subcommand block. Was expecting 4 or 5."
+        logger.critical(err_msg)
+        raise click.ClickException(err_msg)
+    comment = f"{note}: {msg} {sub}"
+    block_impl(ip, comment, duration)
 
-        comment = f"{note}: {msg} {sub}"
-        if subcommand == "block":
-            block(ip, comment, duration)
-        elif subcommand == "queue":
-            queue(ip, comment, duration)    
+
+@cli.command(name="queue")
+def queue() -> None:
+    """Add an IP to the queue. Reads input from stdin."""
+    lines = sys.stdin.read().strip().split("\n")
+    if len(lines) == 5:
+        ip, note, msg, sub, duration = lines
+    elif len(lines) == 4:
+        ip, note, msg, duration = lines
+        sub = ""
+    else:
+        err_msg = f"{len(lines)} number of lines passed to subcommand queue. Was expecting 4 or 5."
+        logger.critical(err_msg)
+        raise click.ClickException(err_msg)
+    comment = f"{note}: {msg} {sub}"
+    queue_impl(ip, comment, duration)
+
+
+@cli.command(name="trim_queue")
+def trim_queue() -> None:
+    """Remove all entries from the pending_blocks queue and report how many were trimmed."""
+    trimmed = trim_queue_impl()
+    logger.info(f"Cleared {trimmed} entries from pending_blocks queue.")
+    click.echo(f"Cleared {trimmed} entries from pending_blocks queue.")
+
+
+# TODO: add a command for getting the failed_queue_size
+@cli.command(name="queue_size")
+def queue_size() -> None:
+    """Show the number of entries in the pending_blocks queue."""
+    size = get_queue_size()
+    logger.info(f"pending_blocks queue size: {size}")
+    click.echo(f"pending_blocks queue size: {size}")
+
+
+@cli.command(name="list_queue")
+@click.option(
+    "--limit", default=100, show_default=True, help="Maximum number of entries to show."
+)
+def list_queue(limit: int) -> None:
+    """List CIDR values (with messages) in the block queue, limited to N entries."""
+    entries = list_queue_entries(limit)
+    if not entries:
+        click.echo("No entries in the block queue.")
+        return
+    for entry in entries:
+        click.echo(
+            f"{entry['id']}: {entry['cidr']} - {entry['why']} (duration: {entry['duration']})"
+        )
+
+
+@cli.command(name="list_acked")
+@click.option(
+    "--limit", default=100, show_default=True, help="Maximum number of entries to show."
+)
+def list_acked(limit: int) -> None:
+    """List CIDR values (with messages) in the block queue that have been acked, limited to N entries."""
+    entries = list_acked_entries(limit)
+    if not entries:
+        click.echo("No acknowledged entries in the block queue.")
+        return
+    for entry in entries:
+        click.echo(
+            f"{entry['id']}: {entry['cidr']} - {entry['why']} (duration: {entry['duration']})"
+        )
+
 
 if __name__ == "__main__":
-    main()
+    cli()
