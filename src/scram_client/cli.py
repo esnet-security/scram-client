@@ -42,16 +42,16 @@ PROM_PORT = os.environ.get("SCRAM_PROMETHEUS_PORT", "9001")
 SCRAM_HOST = os.environ.get("SCRAM_HOST","")
 SCRAM_UUID = os.environ.get("SCRAM_UUID","")
 
-if(SCRAM_HOST == "" or SCRAM_UUID == ""):
+if SCRAM_HOST == "" or SCRAM_UUID == "":
     config = configparser.ConfigParser()
     config.read('/etc/sysconfig/scram-client.conf')
-    if(SCRAM_HOST == ""):
+    if SCRAM_HOST == "":
         try:
             SCRAM_HOST = config.get('SCRAM','SCRAM_HOST')
         except:
             logging.critical(f"No SCRAM_HOST set in env or conf file")
             sys.exit(1)
-    if(SCRAM_UUID == ""):
+    if SCRAM_UUID == "":
         try:
             SCRAM_UUID = config.get('SCRAM','SCRAM_UUID')
         except:
@@ -97,7 +97,6 @@ def block(cidr, why, duration):
     """Block a single IP address"""
     
     source = SCRAM_SOURCE
-#    autoscale = 1
 
     logging.debug("Attempting to block %s for %s.", cidr, why)
 
@@ -113,7 +112,7 @@ def block(cidr, why, duration):
 
     r = requests.post(url,json=payload)
 
-    if(r.status_code != 201):
+    if r.status_code != 201:
         # if it's 403, 
         logging.warning(f"Block request returned status code {r.status_code}")
     else:
@@ -162,7 +161,6 @@ def run_queue():
         else:
             time.sleep(0.1)
 
-    logging.warning("queue_loop ended.")
 
 def register(server):
 
@@ -171,7 +169,7 @@ def register(server):
     payload = {'client_name': SCRAM_SOURCE, 'uuid': new_scram_uuid}
     r = requests.post(url, json=payload)
 
-    if(r.status_code != 201):
+    if r.status_code != 201:
         print("Error initializing new SCRAM client, already registered?")
         sys.exit(1)
     logging.info("Successfully registered new SCRAM client")
@@ -194,10 +192,8 @@ def is_blocked(ip):
             response_json = r.json()
             if response_json.get('is_active'):
                 logging.info(f"{ip} is active (blocked).")
-                print(f"{ip} is active (blocked).")
             else:
                 logging.info(f"{ip} is not active (blocked).")
-                print(f"{ip} is not active (blocked).")
         except ValueError:
             logging.error("Could not decode JSON response.")
     else:
