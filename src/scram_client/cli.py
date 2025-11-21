@@ -58,7 +58,7 @@ if(SCRAM_HOST == "" or SCRAM_UUID == ""):
             logging.critical(f"No SCRAM_UUID set in env or conf file")
             sys.exit(1)
 
-subcommands = ["block", "queue", "run_queue", "register"]
+subcommands = ["block", "queue", "run_queue", "register", "is_blocked"]
 
 usage = (
     f"Usage: {sys.argv[0]} <" + "|".join(subcommands) + ">\n"
@@ -67,6 +67,7 @@ usage = (
     "    queue: Add an IP to the queue.\n"
     "    run_queue: Attempt to block IPs in the queue, removing them if successful.\n"
     "    register [server]: Generate a random UUID and send it to the SCRAM server\n"
+    "    is_blocked [ip]: Check if a single IP is blocked\n"
     "\n"
     "    block and queue expect information passed on stdin, one variable per line, as follows:\n"
     "\n"
@@ -167,7 +168,7 @@ def register(server):
 
     url = "https://" + server + "/api/v1/register_client/"
     new_scram_uuid = str(uuid.uuid4())
-    payload = {'hostname': SCRAM_SOURCE, 'uuid': new_scram_uuid}
+    payload = {'client_name': SCRAM_SOURCE, 'uuid': new_scram_uuid}
     r = requests.post(url, json=payload)
 
     if(r.status_code != 201):
@@ -177,6 +178,32 @@ def register(server):
 
     print("New UUID: ",new_scram_uuid)
     print("Please ask your SCRAM admin to approve this client.")
+
+
+def is_blocked(ip):
+    """Check if a single IP address is blocked."""
+
+    logging.debug("Checking if %s is blocked.", ip)
+
+    url = f"https://{SCRAM_HOST}/api/v1/is_blocked/?ip={ip}"
+
+    r = requests.get(url)
+
+    if r.status_code == 200:
+        try:
+            response_json = r.json()
+            if response_json.get('is_active'):
+                logging.info(f"{ip} is active (blocked).")
+                print(f"{ip} is active (blocked).")
+            else:
+                logging.info(f"{ip} is not active (blocked).")
+                print(f"{ip} is not active (blocked).")
+        except ValueError:
+            logging.error("Could not decode JSON response.")
+    else:
+        logging.warning(f"Request to check if {ip} is active returned status code {r.status_code}")
+
+    return r.ok
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] not in subcommands:
@@ -189,10 +216,15 @@ def main():
         logging.info(f"Prometheus server started on port {PROM_PORT}.")
         run_queue()
     elif subcommand == "register":
-        if(not sys.argv[2]):
+        if len(sys.argv) < 3:
             print(f"Missing required 'server' argument")
             sys.exit(1)
         register(sys.argv[2])
+    elif subcommand == "is_blocked":
+        if len(sys.argv) < 3:
+            print("Missing required 'ip' argument for is_blocked.")
+            sys.exit(1)
+        is_blocked(sys.argv[2])
     else:
         lines = sys.stdin.read().strip().split("\n")
         if len(lines) == 5:
